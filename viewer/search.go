@@ -40,7 +40,9 @@ type OperatorFilter struct {
 }
 type Filter struct {
 	Src            string
+	SrcNetwork     util.Subnet
 	Dst            string
+	DstNetwork     util.Subnet
 	Fqdn           string
 	Severity       []OperatorFilter
 	Count          OperatorFilter
@@ -328,22 +330,31 @@ func ParseSearchInput(input string) (*Filter, string) {
 		case slices.Contains(stringColumns, field):
 			switch field {
 			case "src":
-				// validate string is IP address
-				if _, err := netip.ParseAddr(value); err != nil {
-					return nil, "src must be a valid IP address"
+				if strings.Contains(value, "/") {
+					subnet, err := util.ParseSubnet(value)
+					if err != nil {
+						return nil, "src must be a valid IP address or CIDR range"
+					}
+					criteria.SrcNetwork = subnet
+				} else if _, err := netip.ParseAddr(value); err != nil {
+					return nil, "src must be a valid IP address or CIDR range"
+				} else {
+					criteria.Src = value
 				}
-				criteria.Src = value
 
 			case "dst":
-				// validate if string is IP address
-				if _, err := netip.ParseAddr(value); err != nil {
+				if strings.Contains(value, "/") {
+					subnet, err := util.ParseSubnet(value)
+					if err != nil {
+						return nil, "dst must be a valid IP address, CIDR range, or FQDN"
+					}
+					criteria.DstNetwork = subnet
+				} else if _, err := netip.ParseAddr(value); err != nil {
 					// if value is not an IP, check for valid FQDN
 					if !util.ValidFQDN(value) {
-						return nil, "dst must be a valid IP address or FQDN"
-
+						return nil, "dst must be a valid IP address, CIDR range, or FQDN"
 					}
 					criteria.Fqdn = value
-
 				} else {
 					criteria.Dst = value
 				}

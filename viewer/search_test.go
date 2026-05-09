@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/activecm/rita/v5/config"
+	"github.com/activecm/rita/v5/util"
 	"github.com/activecm/rita/v5/viewer"
 
 	"github.com/charmbracelet/bubbles/list"
@@ -91,12 +92,30 @@ func TestSearchFilters(t *testing.T) {
 		{name: "Filter by src IPv6", search: "src:2001:0000:3238:DFE1:0063:0000:0000:FEFB", filter: &viewer.Filter{Src: "2001:0000:3238:DFE1:0063:0000:0000:FEFB"}},
 		{name: "Filter by invalid src IP", search: "src:1000.5.03", shouldErr: true},
 		{name: "Filter by FQDN in src IP field (invalid)", search: "src:www.alexa.com", shouldErr: true},
+		{name: "Filter by src CIDR IPv4", search: "src:10.55.100.0/24", filter: func() *viewer.Filter {
+			s, _ := util.ParseSubnet("10.55.100.0/24")
+			return &viewer.Filter{SrcNetwork: s}
+		}()},
+		{name: "Filter by src CIDR IPv6", search: "src:2001:db8::/32", filter: func() *viewer.Filter {
+			s, _ := util.ParseSubnet("2001:db8::/32")
+			return &viewer.Filter{SrcNetwork: s}
+		}()},
+		{name: "Filter by src invalid CIDR", search: "src:10.55.100.0/33", shouldErr: true},
 
 		{name: "Filter by dst IP", search: "dst:165.227.88.15", filter: &viewer.Filter{Dst: "165.227.88.15"}},
 		{name: "Filter by dst IPv6", search: "dst:2001:0000:3238:DFE1:0063:0000:0000:FEFB", filter: &viewer.Filter{Dst: "2001:0000:3238:DFE1:0063:0000:0000:FEFB"}},
 		{name: "Filter by invalid dst IP", search: "dst:1000.5.03", shouldErr: true},
 		{name: "Filter by FQDN", search: "dst:www.alexa.com", filter: &viewer.Filter{Fqdn: "www.alexa.com"}},
 		{name: "Filter by invalid FQDN", search: "dst:ww?w.alex??a.com", shouldErr: true},
+		{name: "Filter by dst CIDR IPv4", search: "dst:192.168.0.0/16", filter: func() *viewer.Filter {
+			s, _ := util.ParseSubnet("192.168.0.0/16")
+			return &viewer.Filter{DstNetwork: s}
+		}()},
+		{name: "Filter by dst CIDR IPv6", search: "dst:2001:db8::/48", filter: func() *viewer.Filter {
+			s, _ := util.ParseSubnet("2001:db8::/48")
+			return &viewer.Filter{DstNetwork: s}
+		}()},
+		{name: "Filter by dst invalid CIDR", search: "dst:192.168.0.0/33", shouldErr: true},
 		// beacon score
 		{name: "Filter by beacon score, equals", search: "beacon:90", filter: &viewer.Filter{Beacon: viewer.OperatorFilter{Operator: "=", Value: "0.90"}}},
 		{name: "Filter by beacon score, greater than", search: "beacon:>50", filter: &viewer.Filter{Beacon: viewer.OperatorFilter{Operator: ">", Value: "0.50"}}},

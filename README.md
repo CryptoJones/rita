@@ -79,8 +79,8 @@ src:192.168.88.2 dst:165.227.88.15 beacon:>=90 sort:duration-desc
 | Column              | Field | Operators | Data Type |
 | :---------------- | :------ | :---- | :---- |
 | Severity        |   `severity`   |  | `critical\|high\|medium\|low` |
-| Source           |   `src`   |  | IP address |
-| Destination           |   `dst`   |  | IP address, FQDN |
+| Source           |   `src`   |  | IP address or CIDR (e.g. `10.0.0.0/8`) |
+| Destination           |   `dst`   |  | IP address, CIDR (e.g. `10.0.0.0/8`), or FQDN |
 | Beacon Score           |   `beacon`   | `>, >=, <, <=` | whole number
 | Duration    |  `duration`   | `>, >=, <, <=` | string, ex:(`2h45m`)
 | Subdomains |  `subdomains`   | `>, >=, <, <=` | whole number |

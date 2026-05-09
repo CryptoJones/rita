@@ -279,9 +279,17 @@ func BuildResultsQuery(filter *Filter, currentPage, pageSize int, minTimestamp t
 			whereConditions = append(whereConditions, "src={src:String}")
 			params["src"] = filter.Src
 		}
+		if filter.SrcNetwork.IP != nil {
+			whereConditions = append(whereConditions, "isIPAddressInRange(toString(src), {src_network:String})")
+			params["src_network"] = filter.SrcNetwork.ToString()
+		}
 		if filter.Dst != "" {
 			whereConditions = append(whereConditions, "dst={dst:String}")
 			params["dst"] = filter.Dst
+		}
+		if filter.DstNetwork.IP != nil {
+			whereConditions = append(whereConditions, "isIPAddressInRange(toString(dst), {dst_network:String})")
+			params["dst_network"] = filter.DstNetwork.ToString()
 		}
 		if filter.Fqdn != "" {
 			whereConditions = append(whereConditions, "fqdn={fqdn:String}")
