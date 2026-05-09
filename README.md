@@ -19,15 +19,18 @@ The framework ingests [Zeek Logs](https://www.zeek.org/) in TSV or JSON format, 
  - **Threat Intel Feed Checking**: Query threat intel feeds to search for suspicious domains and hosts
 
  ## Quick Start
- Please see our recommended [System Requirements](docs/System%20Requirements.md). RITA requires [Docker Engine](https://docs.docker.com/engine/install/) with the Compose plugin.
+ Please see our recommended [System Requirements](docs/System%20Requirements.md).
 
-1. Download the [RITA Installer](https://github.com/activecm/rita/releases) for the desired version.
+1. Install [Docker Engine](https://docs.docker.com/engine/install/) with the Compose plugin if not already present.
+   > **Note:** The RITA installer requires Docker. If Docker is not installed, the installer will fail.
 
-2. Uncompress the installer tarfile.
+2. Download the [RITA Installer](https://github.com/activecm/rita/releases) for the desired version.
+
+3. Uncompress the installer tarfile.
    ```
    tar -xf rita-<version>-installer.tar.gz
    ```
-3. Run the install script.
+4. Run the install script.
    ```
    ./rita-<version>-installer/install_rita.sh
    ```
