@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -8,6 +9,8 @@ import (
 	"github.com/activecm/rita/v5/cmd"
 	"github.com/activecm/rita/v5/config"
 	zlog "github.com/activecm/rita/v5/logger"
+	"github.com/activecm/rita/v5/metrics"
+	"github.com/activecm/rita/v5/telemetry"
 	"github.com/activecm/rita/v5/viewer"
 
 	"github.com/joho/godotenv"
@@ -23,6 +26,38 @@ func main() {
 
 	// UNIX Time is faster and smaller than most timestamps
 	// zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
+
+	// Observability is configured from the process environment (not the .env app
+	// config) so it can be driven by the container/orchestrator: OTEL_* enables
+	// tracing, RITA_METRICS_ADDR enables the Prometheus + health endpoint.
+	ctx := context.Background()
+	obsLogger := zlog.GetLogger()
+
+	shutdownTracer, err := telemetry.InitTracer(ctx, "rita", Version)
+	if err != nil {
+		obsLogger.Warn().Err(err).Msg("failed to initialize tracing; continuing without it")
+		shutdownTracer = func(context.Context) error { return nil }
+	}
+
+	var metricsServer *metrics.Server
+	if addr := os.Getenv("RITA_METRICS_ADDR"); addr != "" {
+		metricsServer = metrics.NewServer(addr)
+		metricsErrc := metricsServer.Start()
+		go func() {
+			if err := <-metricsErrc; err != nil {
+				l := zlog.GetLogger()
+				l.Error().Err(err).Str("addr", addr).Msg("metrics server error")
+			}
+		}()
+		obsLogger.Info().Str("addr", addr).Msg("serving Prometheus metrics at /metrics and liveness at /healthz")
+	}
+
+	shutdownObservability := func() {
+		if metricsServer != nil {
+			_ = metricsServer.Shutdown(ctx)
+		}
+		_ = shutdownTracer(ctx)
+	}
 
 	app := &cli.App{
 		EnableBashCompletion: true,
@@ -65,10 +100,13 @@ func main() {
 	}
 
 	if err := app.Run(os.Args); err != nil {
+		// flush metrics/traces before the process exits via Fatal (which skips defers)
+		shutdownObservability()
 		logger := zlog.GetLogger()
 		logger.Fatal().Err(err).Send()
 	}
 
+	shutdownObservability()
 }
 
 // exitErrHandler implements cli.ExitErrHandlerFunc

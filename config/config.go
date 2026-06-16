@@ -21,6 +21,18 @@ var Version string
 
 const DefaultConfigPath = "./config.hjson"
 
+// secondsPerHour is used to express duration-based score thresholds (which are
+// stored in seconds) in human-readable hour units.
+const secondsPerHour = 3600
+
+// CurrentConfigVersion is the schema version understood by this build. It is
+// compared against the optional `config_version` field in the config file so
+// that breaking changes to the config format can be detected and reported
+// instead of silently misbehaving. A value of 0 (the zero value, i.e. the field
+// was omitted) is treated as "unversioned" and accepted for backwards
+// compatibility.
+const CurrentConfigVersion = 1
+
 var errInvalidImpactCategory = errors.New("invalid impact category: must be 'high', 'medium', 'low', or 'none'")
 var errReadingConfigFile = errors.New("encountered an error while reading the config file")
 
@@ -39,12 +51,17 @@ const (
 
 type (
 	Config struct {
-		Env          Env `json:"env" validate:"required"`
-		RITA         `validate:"required"`
-		Filtering    Filtering    `json:"filtering" validate:"required"`
-		Scoring      Scoring      `json:"scoring" validate:"required"`
-		Modifiers    Modifiers    `json:"modifiers" validate:"required"`
-		ZoneTransfer ZoneTransfer `json:"zone_transfer"`
+		// ConfigVersion is the optional schema version of this config file. When
+		// omitted it defaults to 0 ("unversioned") and is accepted for backwards
+		// compatibility. A value greater than CurrentConfigVersion means the file
+		// was written for a newer RITA than this build understands and is rejected.
+		ConfigVersion int `json:"config_version" validate:"gte=0"`
+		Env           Env `json:"env" validate:"required"`
+		RITA          `validate:"required"`
+		Filtering     Filtering    `json:"filtering" validate:"required"`
+		Scoring       Scoring      `json:"scoring" validate:"required"`
+		Modifiers     Modifiers    `json:"modifiers" validate:"required"`
+		ZoneTransfer  ZoneTransfer `json:"zone_transfer"`
 	}
 
 	Env struct { // set by .env file
@@ -156,19 +173,10 @@ func ReadFileConfig(afs afero.Fs, path string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	// fmt.Println("contents:", contents)
 	var cfg Config
-	// // parse the JSON config file
-	// if err := hjson.Unmarshal(contents, &cfg); err != nil {
-	// 	return nil, err
-	// }
 	if err := unmarshal(contents, &cfg, nil); err != nil {
 		return nil, fmt.Errorf("%w, located by default at '%s', please correct the issue in the config and try again:\n\t- %w", errReadingConfigFile, path, err)
 	}
-	// // set the environment variables
-	// if err := setEnv(&cfg); err != nil {
-	// 	return nil, fmt.Errorf("unable to set environment: %w", err)
-	// }
 
 	return &cfg, nil
 }
@@ -327,9 +335,21 @@ func (cfg *Config) Reset() error {
 }
 
 // Validate validates the config struct values
+// ErrConfigVersionTooNew is returned when a config file declares a config_version
+// newer than this build of RITA understands.
+var ErrConfigVersionTooNew = errors.New("config file is newer than this version of RITA understands")
+
 func (cfg *Config) Validate() error {
 	zlog := logger.GetLogger()
 	zlog.Debug().Interface("config", cfg).Msg("validating config")
+
+	// reject config files written for a newer schema than this build supports.
+	// a version of 0 means the file omitted config_version (unversioned) and is
+	// accepted for backwards compatibility.
+	if cfg.ConfigVersion > CurrentConfigVersion {
+		return fmt.Errorf("%w: file declares config_version %d, but this RITA supports up to %d - please upgrade RITA or downgrade the config",
+			ErrConfigVersionTooNew, cfg.ConfigVersion, CurrentConfigVersion)
+	}
 
 	// create a new validator
 	validate, err := NewValidator()
@@ -558,10 +578,10 @@ func defaultConfig() Config {
 			},
 			ThreatScoring: ThreatScoring{
 				LongConnectionScoreThresholds: ScoreThresholds{
-					Base: 1 * 3600, // 1 hour (in seconds),
-					Low:  4 * 3600,
-					Med:  8 * 3600,
-					High: 12 * 3600,
+					Base: 1 * secondsPerHour,  // 1 hour
+					Low:  4 * secondsPerHour,  // 4 hours
+					Med:  8 * secondsPerHour,  // 8 hours
+					High: 12 * secondsPerHour, // 12 hours
 				},
 
 				C2ScoreThresholds: ScoreThresholds{

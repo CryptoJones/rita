@@ -220,8 +220,7 @@ func (server *ServerConn) syncThreatIntelFeedsFromConfig(afs afero.Fs, cfg *conf
 			}
 		}
 	}
-	writer.Close()
-	return nil
+	return writer.Close()
 }
 
 // getThreatIntelFeeds parses the threat intel sources from the config file into a feed map

@@ -10,7 +10,7 @@ import (
 	"github.com/activecm/rita/v5/cmd"
 	"github.com/activecm/rita/v5/config"
 	"github.com/activecm/rita/v5/database"
-	"github.com/activecm/rita/v5/progressbar"
+	"github.com/activecm/rita/v5/internal/progressbar"
 	"github.com/activecm/rita/v5/util"
 
 	"github.com/ClickHouse/clickhouse-go/v2"

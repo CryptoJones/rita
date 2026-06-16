@@ -9,12 +9,25 @@ import (
 	"net"
 	"time"
 
+	"github.com/activecm/rita/v5/circuitbreaker"
 	"github.com/activecm/rita/v5/config"
 	zlog "github.com/activecm/rita/v5/logger"
 
 	clickhouse "github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
+
+// newWriteBreaker builds the circuit breaker used to guard batch writes to a
+// ClickHouse connection. Defaults are conservative: only consecutive failures
+// trip it (a single success resets the count), so it never opens during a
+// healthy import and only fails fast when ClickHouse is genuinely unhealthy.
+func newWriteBreaker() *circuitbreaker.Breaker {
+	return circuitbreaker.New(circuitbreaker.Options{
+		FailureThreshold: 5,
+		ResetTimeout:     30 * time.Second,
+		HalfOpenMax:      1,
+	})
+}
 
 var ErrInvalidDatabaseConnection = fmt.Errorf("database connection is nil")
 var ErrInvalidMinMaxTimestamp = fmt.Errorf("invalid min or max timestamp")
@@ -28,6 +41,12 @@ type DB struct {
 	ctx             context.Context
 	cancel          context.CancelFunc
 	ImportStartedAt time.Time
+	breaker         *circuitbreaker.Breaker
+}
+
+// Breaker returns the circuit breaker guarding writes to this connection.
+func (db *DB) Breaker() *circuitbreaker.Breaker {
+	return db.breaker
 }
 
 // GetSelectedDB returns the name of the target database of db connection
@@ -371,6 +390,7 @@ func ConnectToDB(ctx context.Context, db string, cfg *config.Config, cancel cont
 		ctx:      ctx,
 		cancel:   cancel,
 		selected: db,
+		breaker:  newWriteBreaker(),
 	}, nil
 }
 

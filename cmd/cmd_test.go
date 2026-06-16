@@ -9,11 +9,12 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/google/go-github/github"
+
 	"github.com/activecm/rita/v5/cmd"
 	"github.com/activecm/rita/v5/config"
 	"github.com/activecm/rita/v5/database"
 	"github.com/activecm/rita/v5/util"
-	"github.com/google/go-github/github"
 
 	"github.com/joho/godotenv"
 	"github.com/spf13/afero"
@@ -255,7 +256,6 @@ func captureOutput(t *testing.T, f func()) string {
 	require.NoError(t, err)
 	return buf.String()
 }
-
 
 // captureStderr captures stderr from a function
 func captureStderr(t *testing.T, f func()) string {

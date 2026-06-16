@@ -1,0 +1,18 @@
+# Development override.
+#   docker compose -f docker-compose.yml -f deploy/compose/docker-compose.dev.yml up
+#
+# Verbose logging, exposed ports, and the metrics endpoint for local iteration.
+services:
+  rita:
+    environment:
+      - APP_ENV=dev
+      - LOG_LEVEL=0 # most verbose
+      - LOGGING_ENABLED=true
+      - RITA_METRICS_ADDR=:2112
+    ports:
+      - "2112:2112"
+
+  clickhouse:
+    ports:
+      - "8123:8123"
+      - "9000:9000"

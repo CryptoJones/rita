@@ -17,6 +17,13 @@ import (
 	"golang.org/x/time/rate"
 )
 
+// strobeConnThreshold is the connection-count ceiling that separates "beaconing"
+// candidates from "strobe" traffic. 86400 == 24*60*60, i.e. an average of one
+// connection per second sustained over a full day. At or above this volume a
+// host pair is recorded as a strobe rather than being run through beacon
+// analysis.
+const strobeConnThreshold = 86400
+
 type Analyzer struct {
 	Database        *database.DB
 	ImportID        util.FixedString
@@ -113,15 +120,19 @@ func NewAnalyzer(db *database.DB, cfg *config.Config, importID util.FixedString,
 	}, nil
 }
 
-func (analyzer *Analyzer) Analyze() error {
+// Analyze runs the threat analysis pipeline. The supplied context is the parent
+// of the internal worker error-group, so cancelling it (e.g. on SIGINT) aborts
+// in-flight analysis instead of forcing it to run to completion.
+func (analyzer *Analyzer) Analyze(ctx context.Context) error {
 	logger := zlog.GetLogger()
 
 	// log the start time of the analysis
 	start := time.Now()
 	logger.Debug().Msg("Starting Analysis")
 
-	// create an error group to manage the analysis threads
-	analysisErrGroup, ctx := errgroup.WithContext(context.Background())
+	// create an error group, rooted at the caller's context, to manage the
+	// analysis threads. Cancelling ctx cancels the whole group.
+	analysisErrGroup, ctx := errgroup.WithContext(ctx)
 
 	// create analysis calculation workers
 	for i := 0; i < analyzer.AnalysisWorkers; i++ {
@@ -144,12 +155,14 @@ func (analyzer *Analyzer) Analyze() error {
 
 	// wait for all analysis threads to finish
 	if err := analysisErrGroup.Wait(); err != nil {
-		logger.Fatal().Err(err).Msg("could not perform beacon analysis")
+		logger.Error().Err(err).Msg("could not perform beacon analysis")
 		return err
 	}
 
 	// close the mixtape writer
-	analyzer.writer.Close()
+	if err := analyzer.writer.Close(); err != nil {
+		return err
+	}
 
 	// log the end time of the analysis
 	end := time.Now()
@@ -227,7 +240,7 @@ func (analyzer *Analyzer) runAnalysis() error {
 			if !analyzer.skipBeaconing {
 				// run beacon analysis on entry if there are enough unique connections and the overall connection count is less than a strobe (1 connection per second)
 
-				if entry.TSUnique >= uint64(analyzer.Config.Scoring.Beacon.UniqueConnectionThreshold) && entry.Count < 86400 {
+				if entry.TSUnique >= uint64(analyzer.Config.Scoring.Beacon.UniqueConnectionThreshold) && entry.Count < strobeConnThreshold {
 					beacon, err := analyzer.analyzeBeacon(&entry)
 					if err != nil {
 						continue // all the errors will get logged in the beacon analyzer so we get a line number
@@ -247,7 +260,7 @@ func (analyzer *Analyzer) runAnalysis() error {
 			}
 
 			// record entry as a strobe if the overall connection count meets the strobe threshold (1 connection per second)
-			if entry.Count >= 86400 {
+			if entry.Count >= strobeConnThreshold {
 				hasThreatIndicator = true
 				mixtape.Strobe = true
 				mixtape.StrobeScore = analyzer.Config.Scoring.StrobeImpact.Score

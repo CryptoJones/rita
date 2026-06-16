@@ -8,16 +8,16 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/activecm/rita/v5/config"
 	c "github.com/activecm/rita/v5/constants"
 	"github.com/activecm/rita/v5/database"
-	"github.com/activecm/rita/v5/importer/zeektypes"
+	"github.com/activecm/rita/v5/internal/progressbar"
+	"github.com/activecm/rita/v5/internal/zeektypes"
 	zlog "github.com/activecm/rita/v5/logger"
-	"github.com/activecm/rita/v5/progressbar"
 	"github.com/activecm/rita/v5/util"
+	"github.com/activecm/rita/v5/workerpool"
 
 	"github.com/charmbracelet/bubbles/progress"
 	"github.com/spf13/afero"
@@ -52,8 +52,6 @@ type Importer struct {
 	ProgressBar              *mpb.Progress
 	FileProgressBar          *mpb.Bar
 	ProgressLogger           *log.Logger
-	HTTPLinkMutex            sync.Mutex
-	OpenHTTPLinkMutex        sync.Mutex
 	NumParsers               int
 	NumDigesters             int
 	NumWriters               int
@@ -63,7 +61,7 @@ type Importer struct {
 	importStartedCallback    func(util.FixedString) error
 	validateLogFilesCallback func(map[string][]string, map[string]time.Time) (int, error)
 	startWritersCallback     func(int)
-	closeWritersCallback     func()
+	closeWritersCallback     func() error
 	markFileImportedCallback func(util.FixedString, util.FixedString, string) error
 }
 
@@ -115,15 +113,15 @@ type ResultCounts struct {
 }
 
 type WaitGroups struct {
-	Digester sync.WaitGroup
-	MetaDB   sync.WaitGroup
-	OpenConn sync.WaitGroup
-	Conn     sync.WaitGroup
-	DNS      sync.WaitGroup
-	HTTP     sync.WaitGroup
-	OpenHTTP sync.WaitGroup
-	SSL      sync.WaitGroup
-	OpenSSL  sync.WaitGroup
+	Digester workerpool.Pool
+	MetaDB   workerpool.Pool
+	OpenConn workerpool.Pool
+	Conn     workerpool.Pool
+	DNS      workerpool.Pool
+	HTTP     workerpool.Pool
+	OpenHTTP workerpool.Pool
+	SSL      workerpool.Pool
+	OpenSSL  workerpool.Pool
 }
 
 // NewImporter creates and returns a new Importer object
@@ -253,7 +251,9 @@ func (importer *Importer) Import(afs afero.Fs, files map[string][]string, mtimes
 	)
 
 	// start the import
-	importer.process(afs)
+	if err := importer.process(afs); err != nil {
+		return err
+	}
 
 	// record import time to logger
 	hourlyImportEnd := time.Now()
@@ -280,7 +280,7 @@ func (importer *Importer) Import(afs afero.Fs, files map[string][]string, mtimes
 }
 
 // process loads the files and parses the raw log entries
-func (importer *Importer) process(afs afero.Fs) {
+func (importer *Importer) process(afs afero.Fs) error {
 	// initialize writers
 	importer.startWritersCallback(importer.NumWriters)
 
@@ -337,82 +337,54 @@ func (importer *Importer) process(afs afero.Fs) {
 	close(importer.ErrChannel)
 
 	// close writers
-	importer.closeWritersCallback()
+	return importer.closeWritersCallback()
 }
 
 // startParseRoutines starts a fixed number of goroutines to parse lines from logs into data to be written to the db.
 func (importer *Importer) startParseRoutines() {
-	importer.wg.Conn.Add(importer.NumParsers)
-	importer.wg.OpenConn.Add(importer.NumParsers)
-	importer.wg.DNS.Add(importer.NumParsers)
-	importer.wg.HTTP.Add(importer.NumParsers)
-	importer.wg.OpenHTTP.Add(importer.NumParsers)
-	importer.wg.SSL.Add(importer.NumParsers)
-	importer.wg.OpenSSL.Add(importer.NumParsers)
-
-	for i := 0; i < importer.NumParsers; i++ {
-		go func(_ int) {
-			// parseConn(importer.EntryChannels.Conn, importer.Writers.Conn.WriteChannel, importer.UniqueMaps.Uconn, importer.UniqueMaps.ZeekUIDs, importer.ImportID, &importer.ResultCounts.Conn)
-			parseConn(importer.Cfg, importer.EntryChannels.Conn, importer.Writers.ConnTmp.WriteChannel, importer.ImportID, importer.Database.ImportStartedAt, &importer.ResultCounts.Conn)
-			importer.wg.Conn.Done()
-		}(i)
-		go func(_ int) {
-			// parseConn(importer.EntryChannels.OpenConn, importer.Writers.OpenConn.WriteChannel, importer.UniqueMaps.OpenConn, importer.UniqueMaps.OpenZeekUIDs, importer.ImportID, &importer.ResultCounts.OpenConn)
-			parseConn(importer.Cfg, importer.EntryChannels.OpenConn, importer.Writers.OpenConnTmp.WriteChannel, importer.ImportID, importer.Database.ImportStartedAt, &importer.ResultCounts.OpenConn)
-			importer.wg.OpenConn.Done()
-		}(i)
-
-		go func(_ int) {
-			parseDNS(importer.Cfg, importer.EntryChannels.DNS, importer.Writers.DNS.WriteChannel, importer.Writers.PDNS.WriteChannel, &importer.ResultCounts.DNS, &importer.ResultCounts.PDNSRaw, importer.Database.ImportStartedAt)
-			importer.wg.DNS.Done()
-		}(i)
-
-		go func(_ int) {
-			parseHTTP(importer.Cfg, importer.EntryChannels.HTTP, importer.Writers.HTTPTmp.WriteChannel, importer.Database.ImportStartedAt, &importer.ResultCounts.HTTP, &importer.ResultCounts.Conn)
-			importer.wg.HTTP.Done()
-		}(i)
-
-		go func(_ int) {
-			parseHTTP(importer.Cfg, importer.EntryChannels.OpenHTTP, importer.Writers.OpenHTTPTmp.WriteChannel, importer.Database.ImportStartedAt, &importer.ResultCounts.OpenHTTP, &importer.ResultCounts.OpenConn)
-			importer.wg.OpenHTTP.Done()
-		}(i)
-
-		go func(_ int) {
-			parseSSL(importer.Cfg, importer.EntryChannels.SSL, importer.Writers.SSLTmp.WriteChannel, importer.Database.ImportStartedAt, &importer.ResultCounts.SSL)
-			importer.wg.SSL.Done()
-		}(i)
-
-		go func(_ int) {
-			parseSSL(importer.Cfg, importer.EntryChannels.OpenSSL, importer.Writers.OpenSSLTmp.WriteChannel, importer.Database.ImportStartedAt, &importer.ResultCounts.OpenSSL)
-			importer.wg.OpenSSL.Done()
-		}(i)
-	}
+	// each log type gets its own pool of NumParsers workers; the pools are waited
+	// on independently in process().
+	importer.wg.Conn.Go(importer.NumParsers, func(_ int) {
+		parseConn(importer.Cfg, importer.EntryChannels.Conn, importer.Writers.ConnTmp.WriteChannel, importer.ImportID, importer.Database.ImportStartedAt, &importer.ResultCounts.Conn)
+	})
+	importer.wg.OpenConn.Go(importer.NumParsers, func(_ int) {
+		parseConn(importer.Cfg, importer.EntryChannels.OpenConn, importer.Writers.OpenConnTmp.WriteChannel, importer.ImportID, importer.Database.ImportStartedAt, &importer.ResultCounts.OpenConn)
+	})
+	importer.wg.DNS.Go(importer.NumParsers, func(_ int) {
+		parseDNS(importer.Cfg, importer.EntryChannels.DNS, importer.Writers.DNS.WriteChannel, importer.Writers.PDNS.WriteChannel, &importer.ResultCounts.DNS, &importer.ResultCounts.PDNSRaw, importer.Database.ImportStartedAt)
+	})
+	importer.wg.HTTP.Go(importer.NumParsers, func(_ int) {
+		parseHTTP(importer.Cfg, importer.EntryChannels.HTTP, importer.Writers.HTTPTmp.WriteChannel, importer.Database.ImportStartedAt, &importer.ResultCounts.HTTP, &importer.ResultCounts.Conn)
+	})
+	importer.wg.OpenHTTP.Go(importer.NumParsers, func(_ int) {
+		parseHTTP(importer.Cfg, importer.EntryChannels.OpenHTTP, importer.Writers.OpenHTTPTmp.WriteChannel, importer.Database.ImportStartedAt, &importer.ResultCounts.OpenHTTP, &importer.ResultCounts.OpenConn)
+	})
+	importer.wg.SSL.Go(importer.NumParsers, func(_ int) {
+		parseSSL(importer.Cfg, importer.EntryChannels.SSL, importer.Writers.SSLTmp.WriteChannel, importer.Database.ImportStartedAt, &importer.ResultCounts.SSL)
+	})
+	importer.wg.OpenSSL.Go(importer.NumParsers, func(_ int) {
+		parseSSL(importer.Cfg, importer.EntryChannels.OpenSSL, importer.Writers.OpenSSLTmp.WriteChannel, importer.Database.ImportStartedAt, &importer.ResultCounts.OpenSSL)
+	})
 }
 
 // startDigesters starts a fixed number of goroutines to read and digest files.
 func (importer *Importer) startDigesters(afs afero.Fs) {
-	importer.wg.Digester.Add(importer.NumDigesters)
-	for i := 0; i < importer.NumDigesters; i++ {
-		go func(_ int) {
-			digester(afs, importer.DoneChannels, importer.Paths, importer.ErrChannel, importer.EntryChannels, importer.MetaDBChannel, importer.Database.GetSelectedDB(), importer.ImportID, importer.ProgressLogger, importer.MTimesMap)
-			importer.wg.Digester.Done()
-		}(i)
-	}
+	importer.wg.Digester.Go(importer.NumDigesters, func(_ int) {
+		digester(afs, importer.DoneChannels, importer.Paths, importer.ErrChannel, importer.EntryChannels, importer.MetaDBChannel, importer.Database.GetSelectedDB(), importer.ImportID, importer.ProgressLogger, importer.MTimesMap)
+	})
 }
 
 // startMetaDBFileTracker starts a goroutine to mark files as imported in MetaDB
 func (importer *Importer) startMetaDBFileTracker() {
 
-	importer.wg.MetaDB.Add(1)
-	go func() {
+	importer.wg.MetaDB.Go(1, func(_ int) {
 		for metaDB := range importer.MetaDBChannel {
 			err := importer.markFileImportedCallback(metaDB.fileHash, metaDB.importID, metaDB.path)
 			if err != nil {
 				importer.ProgressLogger.Println("[WARNING] could not mark file as imported, path:", metaDB.path, err)
 			}
 		}
-		importer.wg.MetaDB.Done()
-	}()
+	})
 
 }
 
@@ -526,16 +498,20 @@ func (writer *writers) startWriters(numWriters int) {
 	}
 }
 
-// closeWriters close each writer
-func (writer *writers) closeWriters() {
-	writer.ConnTmp.Close()
-	writer.OpenConnTmp.Close()
-	writer.DNS.Close()
-	writer.PDNS.Close()
-	writer.HTTPTmp.Close()
-	writer.OpenHTTPTmp.Close()
-	writer.SSLTmp.Close()
-	writer.OpenSSLTmp.Close()
+// closeWriters closes each writer, returning a joined error if any of them
+// failed. All writers are always closed (errors.Join evaluates every argument)
+// so that a failure in one writer does not leave the others' goroutines hanging.
+func (writer *writers) closeWriters() error {
+	return errors.Join(
+		writer.ConnTmp.Close(),
+		writer.OpenConnTmp.Close(),
+		writer.DNS.Close(),
+		writer.PDNS.Close(),
+		writer.HTTPTmp.Close(),
+		writer.OpenHTTPTmp.Close(),
+		writer.SSLTmp.Close(),
+		writer.OpenSSLTmp.Close(),
+	)
 }
 
 // season links the http & ssl logs with the conn logs and adds data to those connections
@@ -661,12 +637,16 @@ func (importer *Importer) season() error {
 		return fmt.Errorf("could not perform connection linking: %w", err)
 	}
 
-	sslWriter.Close()
-	openSSLWriter.Close()
-	httpWriter.Close()
-	openHTTPWriter.Close()
-	connWriter.Close()
-	openConnWriter.Close()
+	if err := errors.Join(
+		sslWriter.Close(),
+		openSSLWriter.Close(),
+		httpWriter.Close(),
+		openHTTPWriter.Close(),
+		connWriter.Close(),
+		openConnWriter.Close(),
+	); err != nil {
+		return fmt.Errorf("could not finalize connection-linking writers: %w", err)
+	}
 
 	// // don't truncate tmp tables in debug mode
 	// // these tables should be truncated before each import

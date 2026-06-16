@@ -153,7 +153,9 @@ func (zt *ZoneTransfer) DoZT(axfr bool) error {
 		return err
 	}
 
-	writer.Close()
+	if err := writer.Close(); err != nil {
+		return err
+	}
 
 	// record that a zone transfer occurred
 	zt.RecordZoneTransferPerformed()

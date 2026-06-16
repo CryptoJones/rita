@@ -54,9 +54,7 @@ func (server *ServerConn) importValidMIMETypes(cfg *config.Config) error {
 		return err
 	}
 
-	writer.Close()
-
-	return nil
+	return writer.Close()
 }
 
 func readValidTextMIMETypeFile(filePath string, writeChan chan Data) error {

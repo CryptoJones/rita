@@ -3,11 +3,12 @@ package cmd
 import (
 	"context"
 
+	"github.com/spf13/afero"
+	"github.com/urfave/cli/v2"
+
 	"github.com/activecm/rita/v5/config"
 	"github.com/activecm/rita/v5/database"
 	"github.com/activecm/rita/v5/zonetransfer"
-	"github.com/spf13/afero"
-	"github.com/urfave/cli/v2"
 )
 
 var ZoneTransferCommand = &cli.Command{

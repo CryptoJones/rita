@@ -10,9 +10,9 @@ import (
 
 	"github.com/activecm/rita/v5/config"
 	"github.com/activecm/rita/v5/database"
-	"github.com/activecm/rita/v5/importer/zeektypes"
+	"github.com/activecm/rita/v5/internal/progressbar"
+	"github.com/activecm/rita/v5/internal/zeektypes"
 	zlog "github.com/activecm/rita/v5/logger"
-	"github.com/activecm/rita/v5/progressbar"
 	"github.com/activecm/rita/v5/util"
 
 	"github.com/ClickHouse/clickhouse-go/v2"

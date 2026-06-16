@@ -1,0 +1,83 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "rita.fullname" . }}-import
+  labels:
+    {{- include "rita.labels" . | nindent 4 }}
+    app.kubernetes.io/component: import
+spec:
+  schedule: {{ .Values.importJob.schedule | quote }}
+  concurrencyPolicy: {{ .Values.importJob.concurrencyPolicy }}
+  successfulJobsHistoryLimit: {{ .Values.importJob.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.importJob.failedJobsHistoryLimit }}
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            {{- include "rita.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: import
+          {{- with .Values.podAnnotations }}
+          annotations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+        spec:
+          restartPolicy: Never
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.affinity }}
+          affinity:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          containers:
+            - name: rita-import
+              image: {{ include "rita.image" . }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              args:
+                - "import"
+                - "--logs"
+                - {{ .Values.importJob.logsDir | quote }}
+                - "--database"
+                - {{ .Values.importJob.database | quote }}
+                {{- if .Values.importJob.rolling }}
+                - "--rolling"
+                {{- end }}
+              env:
+                - name: DB_ADDRESS
+                  value: "{{ include "rita.clickhouse.fullname" . }}:{{ .Values.clickhouse.service.nativePort }}"
+                {{- range $k, $v := .Values.env }}
+                - name: {{ $k }}
+                  value: {{ $v | quote }}
+                {{- end }}
+              resources:
+                {{- toYaml .Values.importJob.resources | nindent 16 }}
+              volumeMounts:
+                - name: config
+                  mountPath: /etc/rita
+                - name: logs
+                  mountPath: {{ .Values.importJob.logsDir | quote }}
+          volumes:
+            - name: config
+              configMap:
+                name: {{ include "rita.fullname" . }}-config
+            - name: logs
+              {{- if eq .Values.importJob.logsVolume.type "hostPath" }}
+              hostPath:
+                path: {{ .Values.importJob.logsVolume.hostPath | quote }}
+              {{- else if eq .Values.importJob.logsVolume.type "persistentVolumeClaim" }}
+              persistentVolumeClaim:
+                claimName: {{ .Values.importJob.logsVolume.claimName | quote }}
+              {{- else }}
+              emptyDir: {}
+              {{- end }}

@@ -88,11 +88,13 @@ func (modifier *Modifier) Modify() error {
 
 	// wait for all modifier threads to finish
 	if err := modifierErrGroup.Wait(); err != nil {
-		logger.Fatal().Err(err).Msg("could not perform modifier detection")
+		logger.Error().Err(err).Msg("could not perform modifier detection")
 		return err
 	}
 
-	modifier.writer.Close()
+	if err := modifier.writer.Close(); err != nil {
+		return err
+	}
 	// log the end time of the modifer detection
 	end := time.Now()
 	diff := time.Since(start)

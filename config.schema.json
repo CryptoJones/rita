@@ -1,0 +1,175 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/activecm/rita/config.schema.json",
+  "title": "RITA configuration",
+  "description": "Schema for RITA's config.hjson. The file itself is HJSON (comments and relaxed syntax allowed); this schema validates its JSON-equivalent. Bounds are derived from the validate tags on the Config struct in config/config.go. Additional/unknown keys are allowed so the schema can lag behind new optional settings.",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "config_version": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Optional config schema version. Omit (or 0) for unversioned. A value greater than the RITA build's CurrentConfigVersion is rejected."
+    },
+    "update_check_enabled": {
+      "type": "boolean",
+      "description": "Whether RITA checks GitHub for a newer release on startup."
+    },
+    "batch_size": {
+      "type": "integer",
+      "minimum": 25000,
+      "maximum": 2000000,
+      "description": "Number of rows buffered before a batch is flushed to ClickHouse. Larger values use more memory but reduce insert overhead."
+    },
+    "max_query_execution_time": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2000000,
+      "description": "ClickHouse max_execution_time (seconds) applied to analysis queries."
+    },
+    "months_to_keep_historical_first_seen": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 60,
+      "description": "How many months of historical first-seen data to retain."
+    },
+    "threat_intel": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Threat-intel feed configuration.",
+      "properties": {
+        "online_feeds": {
+          "type": "array",
+          "description": "URLs of online threat-intel feeds (one IP or domain per line in each feed).",
+          "items": { "type": "string", "format": "uri" }
+        }
+      }
+    },
+    "filtering": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Filters applied during connection-log import.",
+      "properties": {
+        "internal_subnets": {
+          "type": "array",
+          "minItems": 1,
+          "description": "CIDR ranges considered internal. Required and non-empty.",
+          "items": { "type": "string" }
+        },
+        "always_included_subnets": {
+          "type": "array",
+          "description": "CIDR ranges to always include regardless of other filters.",
+          "items": { "type": "string" }
+        },
+        "always_included_domains": {
+          "type": "array",
+          "description": "Domains (wildcards allowed) to always include.",
+          "items": { "type": "string" }
+        },
+        "never_included_subnets": {
+          "type": "array",
+          "minItems": 1,
+          "description": "CIDR ranges to always exclude. Required and non-empty.",
+          "items": { "type": "string" }
+        },
+        "never_included_domains": {
+          "type": "array",
+          "description": "Domains (wildcards allowed) to always exclude.",
+          "items": { "type": "string" }
+        },
+        "filter_external_to_internal": {
+          "type": "boolean",
+          "description": "Whether to drop external-to-internal connections during import."
+        }
+      }
+    },
+    "scoring": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Threat-scoring configuration.",
+      "properties": {
+        "beacon": {
+          "type": "object",
+          "additionalProperties": true,
+          "description": "Beacon-detection scoring. The four weight fields should sum to 1.",
+          "properties": {
+            "unique_connection_threshold": {
+              "type": "integer",
+              "minimum": 4,
+              "description": "Minimum unique connections before a pair is eligible for beacon analysis."
+            },
+            "timestamp_score_weight": { "$ref": "#/$defs/weight" },
+            "datasize_score_weight": { "$ref": "#/$defs/weight" },
+            "duration_score_weight": { "$ref": "#/$defs/weight" },
+            "histogram_score_weight": { "$ref": "#/$defs/weight" },
+            "score_thresholds": { "$ref": "#/$defs/scoreThresholds" }
+          }
+        },
+        "long_connection_score_thresholds": {
+          "allOf": [{ "$ref": "#/$defs/scoreThresholds" }],
+          "description": "Buckets (in seconds, 1..86400) for long-connection severity."
+        },
+        "c2_score_thresholds": { "$ref": "#/$defs/scoreThresholds" },
+        "strobe_impact": { "$ref": "#/$defs/scoreImpact" },
+        "threat_intel_impact": { "$ref": "#/$defs/scoreImpact" }
+      }
+    },
+    "modifiers": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Score modifiers applied on top of base indicator scores. All *_score_increase values are in the range 0..1.",
+      "properties": {
+        "first_seen_score_increase": { "$ref": "#/$defs/weight" },
+        "first_seen_increase_threshold": { "type": "number", "minimum": 1, "maximum": 90 },
+        "first_seen_score_decrease": { "$ref": "#/$defs/weight" },
+        "first_seen_decrease_threshold": { "type": "number", "minimum": 1, "maximum": 90 },
+        "missing_host_count_score_increase": { "$ref": "#/$defs/weight" },
+        "rare_signature_score_increase": { "$ref": "#/$defs/weight" },
+        "c2_over_dns_direct_conn_score_increase": { "$ref": "#/$defs/weight" },
+        "mime_type_mismatch_score_increase": { "$ref": "#/$defs/weight" }
+      }
+    },
+    "zone_transfer": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Optional DNS zone-transfer integration.",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "domain_name": { "type": "string", "description": "FQDN to transfer (required when enabled)." },
+        "name_server": { "type": "string", "description": "host:port of the name server (required when enabled)." }
+      }
+    }
+  },
+  "$defs": {
+    "weight": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "A score weight or increment in the range 0..1."
+    },
+    "scoreThresholds": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Graduated severity buckets. Values must be strictly increasing: base < low < medium < high.",
+      "properties": {
+        "base": { "type": "integer" },
+        "low": { "type": "integer" },
+        "medium": { "type": "integer" },
+        "high": { "type": "integer" }
+      },
+      "required": ["base", "low", "medium", "high"]
+    },
+    "scoreImpact": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Binary-indicator impact: a severity category and its score contribution.",
+      "properties": {
+        "category": {
+          "type": "string",
+          "enum": ["critical", "high", "medium", "low", "none"]
+        },
+        "score": { "$ref": "#/$defs/weight" }
+      }
+    }
+  }
+}

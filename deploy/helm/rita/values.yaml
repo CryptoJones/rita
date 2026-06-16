@@ -1,0 +1,87 @@
+# Default values for the rita chart.
+
+image:
+  repository: ghcr.io/activecm/rita
+  # Defaults to .Chart.AppVersion when empty.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+# Scheduled import job.
+importJob:
+  # Cron schedule for the import (default: every hour).
+  schedule: "0 * * * *"
+  # Directory inside the container that holds the logs to import (mounted below).
+  logsDir: /logs
+  # Database name to import into.
+  database: rita
+  # Pass --rolling to the import command.
+  rolling: true
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  resources:
+    requests:
+      cpu: "500m"
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 4Gi
+  # Where logs come from. Provide an existing PVC or hostPath to feed the import.
+  logsVolume:
+    # one of: emptyDir | hostPath | persistentVolumeClaim
+    type: emptyDir
+    hostPath: ""
+    claimName: ""
+
+# RITA configuration. The contents of `configHjson` are mounted as config.hjson.
+# Connection settings come from env (see below).
+config:
+  # Minimal example; replace internal_subnets with your network(s).
+  configHjson: |
+    {
+      "config_version": 1,
+      "filtering": {
+        "internal_subnets": ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"],
+        "never_included_subnets": ["255.255.255.255/32"]
+      }
+    }
+
+# Environment for the RITA container (secrets should come from a Secret in prod).
+env:
+  LOG_LEVEL: "3"
+  LOGGING_ENABLED: "true"
+  TZ: "Etc/UTC"
+  CLICKHOUSE_USERNAME: "default"
+  CLICKHOUSE_PASSWORD: ""
+  # OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
+  # RITA_METRICS_ADDR: ":2112"
+
+clickhouse:
+  image:
+    repository: clickhouse/clickhouse-server
+    tag: "24.1.6"
+    pullPolicy: IfNotPresent
+  service:
+    httpPort: 8123
+    nativePort: 9000
+  persistence:
+    enabled: true
+    size: 50Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: "1"
+      memory: 4Gi
+    limits:
+      cpu: "4"
+      memory: 16Gi
+
+nameOverride: ""
+fullnameOverride: ""
+
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}

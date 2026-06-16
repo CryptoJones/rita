@@ -1,0 +1,25 @@
+RITA has been deployed.
+
+ClickHouse:
+  Service (in-cluster): {{ include "rita.clickhouse.fullname" . }}:{{ .Values.clickhouse.service.nativePort }}
+  Persistence: {{ if .Values.clickhouse.persistence.enabled }}{{ .Values.clickhouse.persistence.size }}{{ else }}disabled (emptyDir - data is NOT durable){{ end }}
+
+Import CronJob:
+  Name:     {{ include "rita.fullname" . }}-import
+  Schedule: {{ .Values.importJob.schedule }}
+  Database: {{ .Values.importJob.database }}{{ if .Values.importJob.rolling }} (rolling){{ end }}
+  Logs dir: {{ .Values.importJob.logsDir }}
+
+Next steps:
+  1. Make sure logs land where the CronJob can read them. The default logsVolume
+     type is "{{ .Values.importJob.logsVolume.type }}"; for real data set
+     importJob.logsVolume to a hostPath or persistentVolumeClaim.
+  2. Edit config.config.hjson (especially filtering.internal_subnets) for your
+     network, then `helm upgrade`.
+  3. Trigger an import immediately instead of waiting for the schedule:
+       kubectl create job --from=cronjob/{{ include "rita.fullname" . }}-import rita-import-manual
+  4. Watch it:
+       kubectl logs -f job/rita-import-manual
+
+Security note: set CLICKHOUSE_PASSWORD via a Kubernetes Secret in production
+rather than the plain env value in values.yaml.

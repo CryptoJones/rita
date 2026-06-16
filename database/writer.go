@@ -2,16 +2,29 @@ package database
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
+	"github.com/activecm/rita/v5/circuitbreaker"
 	"github.com/activecm/rita/v5/config"
-	zlog "github.com/activecm/rita/v5/logger"
+	"github.com/activecm/rita/v5/metrics"
 
 	clickhouse "github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/time/rate"
 )
+
+// batchBufferPool reuses the per-worker batch buffers across the many writer
+// goroutines created during an import (one writer per log type, each with
+// several workers), avoiding a fresh []Data allocation for every worker. Buffers
+// are pooled by pointer so that returning one to the pool doesn't itself
+// allocate a boxed slice header (staticcheck SA6002).
+var batchBufferPool = sync.Pool{
+	New: func() any { s := make([]Data, 0); return &s },
+}
+
+//go:generate go run go.uber.org/mock/mockgen -source=writer.go -destination=mock_database_test.go -package=database
 
 type (
 	Data any
@@ -21,6 +34,11 @@ type (
 		getConn() driver.Conn
 		GetContext() context.Context
 		QueryParameters(clickhouse.Parameters) context.Context
+		// Breaker returns the circuit breaker guarding writes to this
+		// connection, or nil if none is configured (writes then proceed
+		// unguarded). Sharing one breaker per connection lets a struggling
+		// ClickHouse fail fast for all writers at once.
+		Breaker() *circuitbreaker.Breaker
 	}
 
 	BulkWriter struct {
@@ -99,9 +117,10 @@ func (w *BulkWriter) shouldReadData(id int, empty bool) bool {
 	return numInProgress == 0 || w.batches[id] > 0
 }
 
-// Close waits for the write threads to finish
-func (w *BulkWriter) Close() {
-	logger := zlog.GetLogger()
+// Close waits for the write threads to finish. It returns the first error
+// encountered by any writer worker (if any) rather than terminating the process,
+// leaving it to the caller to decide how a write failure should be handled.
+func (w *BulkWriter) Close() error {
 	// tell workers that no more data will be sent on this channel
 	close(w.WriteChannel)
 	// mark the channel as closed
@@ -109,19 +128,31 @@ func (w *BulkWriter) Close() {
 	// notify workers that the channel is closed
 	w.cond.Broadcast()
 	// wait for the errgroup
-	if err := w.WriteWg.Wait(); err != nil {
-		logger.Fatal().Err(err).Str("database", w.writerName).Str("stage", "close_writer").Msg("Encountered an unrecoverable issue when trying to write to the database, exiting")
-	}
+	err := w.WriteWg.Wait()
 
 	close(w.ProgChannel)
+
+	if err != nil {
+		metrics.WriteErrorsTotal.Inc()
+		return fmt.Errorf("error writing to database for %q: %w", w.writerName, err)
+	}
+	return nil
+}
+
+// sendBatch sends a prepared batch, routed through the connection's circuit
+// breaker when one is configured so a struggling ClickHouse fails fast for every
+// writer at once instead of each piling up on dial/timeout waits.
+func (w *BulkWriter) sendBatch(batch driver.Batch) error {
+	if br := w.db.Breaker(); br != nil {
+		return br.Execute(w.ctx, func(context.Context) error { return batch.Send() })
+	}
+	return batch.Send()
 }
 
 // Start kicks off a new write thread
 func (w *BulkWriter) Start(id int) {
 
 	w.WriteWg.Go(func() error {
-		logger := zlog.GetLogger()
-
 		conn := w.db.getConn()
 
 		chCtx := w.db.QueryParameters(clickhouse.Parameters{
@@ -130,7 +161,15 @@ func (w *BulkWriter) Start(id int) {
 
 		batchCount := 0
 
-		var items []Data
+		// borrow a batch buffer from the shared pool and return it (cleared) when
+		// this worker exits, so its backing array can be reused by another worker.
+		bufPtr := batchBufferPool.Get().(*[]Data)
+		items := (*bufPtr)[:0]
+		defer func() {
+			clear(items[:cap(items)])
+			*bufPtr = items[:0]
+			batchBufferPool.Put(bufPtr)
+		}()
 
 		// loop over input channel
 		for {
@@ -175,27 +214,25 @@ func (w *BulkWriter) Start(id int) {
 				// initialize batch
 				batch, err := conn.PrepareBatch(chCtx, w.query)
 				if err != nil {
-					logger.Fatal().Err(err).Str("database", w.writerName).Str("stage", "prepare").Int("batch_size", w.batches[id]).Msg("Encountered an unrecoverable issue when trying to write to the database, exiting")
+					return fmt.Errorf("preparing batch for %q (batch_size %d): %w", w.writerName, w.batches[id], err)
 				}
 
 				// add each item in batch to this batch
 				for _, item := range items {
-					err := batch.AppendStruct(item)
-					if err != nil {
-						logger.Fatal().Err(err).Str("database", w.writerName).Str("stage", "append").Int("batch_size", w.batches[id]).Msg("Encountered an unrecoverable issue when trying to write to the database, exiting")
+					if err := batch.AppendStruct(item); err != nil {
+						return fmt.Errorf("appending row to batch for %q (batch_size %d): %w", w.writerName, w.batches[id], err)
 					}
 				}
 
 				// wait for the rate limiter so that not too many batches are inserted at a time
 				// ClickHouse recommends to send 1 batch per second, but it appears to work just fine for 5 batches per second
 				if err := w.limiter.Wait(w.db.GetContext()); err != nil {
-					logger.Fatal().Err(err).Str("database", w.writerName).Str("stage", "limiter").Int("batch_size", w.batches[id]).Msg("Encountered an unrecoverable issue when trying to write to the database, exiting")
+					return fmt.Errorf("rate limiter wait for %q (batch_size %d): %w", w.writerName, w.batches[id], err)
 				}
 
 				// send batch
-				err = batch.Send()
-				if err != nil {
-					logger.Fatal().Err(err).Str("database", w.writerName).Str("stage", "send").Int("batch_size", w.batches[id]).Msg("Encountered an unrecoverable issue when trying to write to the database, exiting")
+				if err := w.sendBatch(batch); err != nil {
+					return fmt.Errorf("sending batch for %q (batch_size %d): %w", w.writerName, w.batches[id], err)
 				}
 
 				// if progress updates are enabled, send the number of records
@@ -210,9 +247,10 @@ func (w *BulkWriter) Start(id int) {
 				w.batches[id] = 0
 				w.cond.Broadcast()
 				w.mu.Unlock()
-				// reset count and items slice
+				// reset count and reuse the items buffer's backing array to avoid
+				// reallocating a new slice for every batch
 				batchCount = 0
-				items = nil
+				items = items[:0]
 			}
 		}
 
@@ -220,19 +258,17 @@ func (w *BulkWriter) Start(id int) {
 		if batchCount > 0 {
 			batch, err := conn.PrepareBatch(chCtx, w.query)
 			if err != nil {
-				logger.Fatal().Err(err).Str("database", w.writerName).Str("stage", "final_prepare").Int("batch_size", w.batches[id]).Msg("Encountered an unrecoverable issue when trying to write to the database, exiting")
+				return fmt.Errorf("preparing final batch for %q (batch_size %d): %w", w.writerName, w.batches[id], err)
 			}
 
 			for _, item := range items {
-				err := batch.AppendStruct(item)
-				if err != nil {
-					logger.Fatal().Err(err).Str("database", w.writerName).Str("stage", "final_append").Int("batch_size", w.batches[id]).Msg("Encountered an unrecoverable issue when trying to write to the database, exiting")
+				if err := batch.AppendStruct(item); err != nil {
+					return fmt.Errorf("appending row to final batch for %q (batch_size %d): %w", w.writerName, w.batches[id], err)
 				}
 			}
 
-			err = batch.Send()
-			if err != nil {
-				logger.Fatal().Err(err).Str("database", w.writerName).Str("stage", "final_send").Int("batch_size", w.batches[id]).Msg("Encountered an unrecoverable issue when trying to write to the database, exiting")
+			if err := w.sendBatch(batch); err != nil {
+				return fmt.Errorf("sending final batch for %q (batch_size %d): %w", w.writerName, w.batches[id], err)
 			}
 
 			if w.withProgress {

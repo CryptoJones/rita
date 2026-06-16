@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/activecm/rita/v5/circuitbreaker"
 	"github.com/activecm/rita/v5/config"
 	zlog "github.com/activecm/rita/v5/logger"
 
@@ -16,10 +17,16 @@ import (
 )
 
 type ServerConn struct {
-	Conn   driver.Conn
-	addr   string
-	ctx    context.Context
-	cancel context.CancelFunc
+	Conn    driver.Conn
+	addr    string
+	ctx     context.Context
+	cancel  context.CancelFunc
+	breaker *circuitbreaker.Breaker
+}
+
+// Breaker returns the circuit breaker guarding writes to this connection.
+func (server *ServerConn) Breaker() *circuitbreaker.Breaker {
+	return server.breaker
 }
 
 var ErrNoMetaDBImportRecordForDatabase = errors.New("no import record found for database")
@@ -485,8 +492,9 @@ func ConnectToServer(ctx context.Context, cfg *config.Config) (*ServerConn, erro
 	}
 
 	return &ServerConn{
-		Conn: conn,
-		addr: cfg.Env.DBConnection,
-		ctx:  ctx,
+		Conn:    conn,
+		addr:    cfg.Env.DBConnection,
+		ctx:     ctx,
+		breaker: newWriteBreaker(),
 	}, nil
 }

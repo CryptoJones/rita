@@ -1,0 +1,25 @@
+# Example local override for docker-compose.
+#
+# Docker Compose automatically merges docker-compose.override.yml on top of
+# docker-compose.yml. Copy this file to enable the tweaks below:
+#
+#   cp docker-compose.override.example.yml docker-compose.override.yml
+#
+# docker-compose.override.yml is git-ignored by convention; keep machine-specific
+# settings there, not in the committed docker-compose.yml.
+services:
+  rita:
+    environment:
+      # more verbose logging while developing locally
+      - LOG_LEVEL=1
+      - APP_ENV=dev
+      # expose Prometheus metrics + health endpoint from the rita container
+      - RITA_METRICS_ADDR=:2112
+    ports:
+      - "2112:2112" # /metrics and /healthz
+
+  clickhouse:
+    ports:
+      # expose ClickHouse to the host for local debugging (psql/clickhouse-client)
+      - "8123:8123" # HTTP
+      - "9000:9000" # native protocol

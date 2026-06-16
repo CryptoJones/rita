@@ -13,8 +13,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/activecm/rita/v5/util"
 	"github.com/spf13/afero"
+
+	"github.com/activecm/rita/v5/util"
 
 	"github.com/stretchr/testify/require"
 )

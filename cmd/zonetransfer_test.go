@@ -1,8 +1,9 @@
 package cmd_test
 
 import (
-	"github.com/activecm/rita/v5/cmd"
 	"github.com/urfave/cli/v2"
+
+	"github.com/activecm/rita/v5/cmd"
 
 	"github.com/stretchr/testify/require"
 )

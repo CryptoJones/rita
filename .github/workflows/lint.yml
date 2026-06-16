@@ -1,0 +1,86 @@
+name: Lint & Security
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - develop
+    tags-ignore:
+      - "v*"
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  golangci:
+    name: golangci-lint (incl. gosec)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.24"
+          cache: true
+
+      # gosec runs as part of golangci-lint because it is enabled in .golangci.yml.
+      # The pinned version must stay on the v1 line: the repo's .golangci.yml uses
+      # the v1 config schema (top-level linters-settings:). Bump to a v2 config
+      # before moving this to a v2 golangci-lint.
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.64.8
+
+  govulncheck:
+    name: Vulnerability scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.24"
+          cache: true
+
+      - name: Run govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+  binary-size:
+    name: Binary size check
+    runs-on: ubuntu-latest
+    # Warn (and fail) if the rita binary grows past a generous ceiling, so an
+    # accidental dependency bloat is noticed in review rather than at release.
+    env:
+      MAX_BINARY_BYTES: 104857600 # 100 MiB
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.24"
+          cache: true
+
+      - name: Build
+        run: make build
+
+      - name: Check size
+        shell: bash
+        run: |
+          set -euo pipefail
+          size=$(stat -c %s rita)
+          human=$(numfmt --to=iec "$size")
+          echo "rita binary size: ${human} (${size} bytes)"
+          echo "## Binary size: ${human}" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$size" -gt "$MAX_BINARY_BYTES" ]; then
+            echo "::error::rita binary (${human}) exceeds the ${MAX_BINARY_BYTES}-byte limit"
+            exit 1
+          fi

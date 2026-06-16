@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "rita.fullname" . }}-config
+  labels:
+    {{- include "rita.labels" . | nindent 4 }}
+data:
+  config.hjson: |
+{{ .Values.config.configHjson | indent 4 }}

@@ -64,22 +64,23 @@ type WalkError struct {
 }
 
 func init() {
-	// parse private IPs
-	privateIPs, _ := NewSubnetList(
+	// Parse the built-in private IP blocks. Loopback and link-local ranges are
+	// intentionally omitted here because they are handled separately by
+	// net.IP.IsLoopback / IsLinkLocalUnicast / IsLinkLocalMulticast.
+	privateIPs, err := NewSubnetList(
 		[]string{
-			// "127.0.0.0/8",    // IPv4 Loopback; handled by ip.IsLoopback
-			// "::1/128",        // IPv6 Loopback; handled by ip.IsLoopback
-			// "169.254.0.0/16", // RFC3927 link-local; handled by ip.IsLinkLocalUnicast()
-			// "fe80::/10",      // IPv6 link-local; handled by ip.IsLinkLocalUnicast()
 			"10.0.0.0/8",     // RFC1918
 			"172.16.0.0/12",  // RFC1918
 			"192.168.0.0/16", // RFC1918
 			"fc00::/7",       // IPv6 unique local addr
 		})
-	// if err != nil {
-	// 	// TODO: should we replace this panic with something else?
-	// 	panic(fmt.Sprintf("error defining private IPs: %v", err.Error()))
-	// }
+	// These CIDRs are compile-time constants, so a parse failure can only mean a
+	// programming error in the list above. Fail fast at startup rather than
+	// silently running with an empty private-IP set (which would misclassify
+	// every internal host as publicly routable).
+	if err != nil {
+		panic(fmt.Sprintf("error defining private IP blocks: %v", err))
+	}
 	privateIPBlocks = privateIPs
 }
 
@@ -142,12 +143,15 @@ func (bin FixedString) Value() (driver.Value, error) {
 	return &bin.val, nil
 }
 
+// fqdnRegex validates an FQDN.
+// This pattern requires at least two labels (separated by dots), with each label starting and ending with an alphanumeric character.
+// Labels in between can have hyphens. The last label (TLD) must be at least two characters long, with only letters.
+// It is compiled once at package load time rather than on every ValidFQDN call,
+// which is significantly cheaper on the import/filtering hot path.
+var fqdnRegex = regexp.MustCompile(`^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$`)
+
 func ValidFQDN(value string) bool {
-	// Regular expression for validating FQDN
-	// This pattern requires at least two labels (separated by dots), with each label starting and ending with an alphanumeric character.
-	// Labels in between can have hyphens. The last label (TLD) must be at least two characters long, with only letters.
-	re := regexp.MustCompile(`^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$`)
-	return re.MatchString(value)
+	return fqdnRegex.MatchString(value)
 }
 
 // ContainsIP checks if a collection of subnets contains an IP

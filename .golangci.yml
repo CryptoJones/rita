@@ -252,7 +252,7 @@ linters:
     - unconvert
 
     # Finds unused parameters
-    # - unparam
+    - unparam
 
     # Finds unused declarations
     - unused

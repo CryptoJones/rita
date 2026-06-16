@@ -6,12 +6,13 @@ import (
 
 	"time"
 
-	"github.com/activecm/rita/v5/config"
-	"github.com/activecm/rita/v5/database"
-	"github.com/activecm/rita/v5/zonetransfer"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/activecm/rita/v5/config"
+	"github.com/activecm/rita/v5/database"
+	"github.com/activecm/rita/v5/zonetransfer"
 )
 
 type ZoneTransferSuite FilterTestSuite

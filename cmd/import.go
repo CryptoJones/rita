@@ -1,16 +1,19 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 	"unicode"
 
@@ -20,6 +23,7 @@ import (
 	"github.com/activecm/rita/v5/database"
 	i "github.com/activecm/rita/v5/importer"
 	zlog "github.com/activecm/rita/v5/logger"
+	"github.com/activecm/rita/v5/metrics"
 	m "github.com/activecm/rita/v5/modifier"
 	"github.com/activecm/rita/v5/util"
 
@@ -97,6 +101,7 @@ var ImportCommand = &cli.Command{
 
 		// run import command
 		_, err = RunImportCmd(startTime, cfg, afs, cCtx.String("logs"), cCtx.String("database"), cCtx.Bool("rolling"), cCtx.Bool("rebuild"))
+		metrics.ObserveImport(err, time.Since(startTime).Seconds())
 		if err != nil {
 			return err
 		}
@@ -123,6 +128,11 @@ type ImportResults struct {
 }
 
 func RunImportCmd(startTime time.Time, cfg *config.Config, afs afero.Fs, logDir string, dbName string, rolling bool, rebuild bool) (ImportResults, error) {
+	// Cancel long-running analysis on SIGINT/SIGTERM so an operator can abort an
+	// import cleanly instead of having it run to completion.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	availableCores := GetAvailableCores(runtime.NumCPU())
 	if availableCores > 2 {
 		runtime.GOMAXPROCS(availableCores)
@@ -267,7 +277,8 @@ func RunImportCmd(startTime time.Time, cfg *config.Config, afs afero.Fs, logDir 
 			}
 
 			// analyze the data
-			err = analyzer.Analyze()
+			err = analyzer.Analyze(ctx)
+			metrics.ObserveAnalysis(err)
 			if err != nil {
 				return importResults, err
 			}

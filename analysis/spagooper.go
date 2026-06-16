@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/activecm/rita/v5/internal/progressbar"
 	zlog "github.com/activecm/rita/v5/logger"
-	"github.com/activecm/rita/v5/progressbar"
 	"github.com/activecm/rita/v5/util"
 
 	"github.com/ClickHouse/clickhouse-go/v2"

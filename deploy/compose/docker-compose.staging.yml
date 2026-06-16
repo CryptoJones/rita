@@ -1,0 +1,25 @@
+# Staging override.
+#   docker compose -f docker-compose.yml -f deploy/compose/docker-compose.staging.yml up -d
+#
+# Moderate resource limits, restart policy, info-level logging. Pin RITA_VERSION
+# and CLICKHOUSE_VERSION in your environment/.env rather than using :latest.
+services:
+  rita:
+    restart: on-failure
+    environment:
+      - LOG_LEVEL=3 # info
+      - LOGGING_ENABLED=true
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 4g
+
+  clickhouse:
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "4.0"
+          memory: 8g
+    # ClickHouse stays on the internal network only (no host port exposure).

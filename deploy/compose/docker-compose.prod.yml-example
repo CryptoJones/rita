@@ -1,0 +1,41 @@
+# Production override (example).
+#   cp deploy/compose/docker-compose.prod.yml-example deploy/compose/docker-compose.prod.yml
+#   # set RITA_VERSION and CLICKHOUSE_VERSION to pinned tags in your .env
+#   docker compose -f docker-compose.yml -f deploy/compose/docker-compose.prod.yml up -d
+#
+# Pinned images, restart policies, resource limits, no exposed database port, and
+# warn-level logging. Tune the limits to your sensor's hardware.
+services:
+  rita:
+    image: ghcr.io/activecm/rita:${RITA_VERSION:?set RITA_VERSION to a pinned tag}
+    restart: unless-stopped
+    environment:
+      - LOG_LEVEL=4 # warn
+      - LOGGING_ENABLED=true
+      # ship traces to your collector if you run one:
+      # - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
+    deploy:
+      resources:
+        limits:
+          cpus: "4.0"
+          memory: 8g
+        reservations:
+          cpus: "1.0"
+          memory: 2g
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:${CLICKHOUSE_VERSION:?set CLICKHOUSE_VERSION to a pinned tag}
+    restart: unless-stopped
+    # No host port mapping: ClickHouse is reachable only on the internal network.
+    deploy:
+      resources:
+        limits:
+          cpus: "8.0"
+          memory: 32g
+        reservations:
+          cpus: "2.0"
+          memory: 8g
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
